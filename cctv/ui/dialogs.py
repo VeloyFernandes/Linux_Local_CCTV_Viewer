@@ -72,7 +72,7 @@ class CameraDialog(QDialog):
         form = QFormLayout()
         self.name_edit = QLineEdit()
         self.host_edit = QLineEdit()
-        self.host_edit.setPlaceholderText("e.g. 192.168.1.108 or camera.local")
+        self.host_edit.setPlaceholderText("e.g. 192.168.1.100 or camera.local")
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(80)

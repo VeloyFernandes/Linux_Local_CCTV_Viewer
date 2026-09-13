@@ -127,7 +127,7 @@ The app cannot reach cameras at `192.168.x.x` when you are away. Two options:
    (e.g. `camera1.duckdns.org`), and if you forwarded distinct
    external ports set **Remote ONVIF port** and **Remote RTSP port** (each
    camera behind one public IP needs its own forwarded ports, e.g. camera 1
-   ONVIF 8181 → 192.168.68.105:80 and RTSP 1554 → 192.168.68.105:554). Then
+   ONVIF 8181 → 192.168.1.100:80 and RTSP 1554 → 192.168.1.100:554). Then
    switch the toolbar to **Network: Remote**. The app reconnects through the
    DDNS endpoint and automatically rewrites the internal IPs returned by ONVIF
    to your public host; PTZ controls follow the same endpoint.
@@ -158,6 +158,18 @@ The app cannot reach cameras at `192.168.x.x` when you are away. Two options:
 | Imou cameras | RTSP patterns are tried Imou/Dahua-first (`/cam/realmonitor?channel=1&subtype=0/1`); the PTZ controller omits zero-zoom velocities and falls back to pan/tilt-only Stop — both quirks of Imou firmware. |
 | `libGL.so.1` error | `sudo apt install libgl1` |
 | Qt platform plugin error | `sudo apt install libxcb-cursor0 libxkbcommon-x11-0` |
+
+## Security & Disclaimer
+
+- Camera passwords are stored base64-obfuscated — **not encrypted**. Anyone
+  with filesystem access to `~/.config/onvif-cctv/cameras.json` can read
+  them. Treat that file as sensitive.
+- Exposing cameras or this app beyond your local network (port forwarding,
+  DDNS, Remote mode) is done entirely **at your own risk**: use strong,
+  unique passwords, prefer a VPN, and keep camera firmware up to date.
+- This software is provided **"as is", without warranty of any kind**,
+  express or implied. Use it at your own risk — the authors are not liable
+  for any damage, data loss, or security issues arising from its use.
 
 ## Notes
 
