@@ -179,3 +179,7 @@ The app cannot reach cameras at `192.168.x.x` when you are away. Two options:
   main stream when recording from fullscreen).
 - `python run.py --demo` starts 8 synthetic test cameras — ideal for
   evaluating the UI without hardware.
+
+## License
+
+[MIT](LICENSE)
