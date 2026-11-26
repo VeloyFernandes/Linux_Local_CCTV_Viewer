@@ -41,7 +41,7 @@ snapshots, a login lock and a live system dashboard.
 ## Architecture
 
 ```
-AI_CCTV/
+Linux_Local_CCTV_Viewer/
 ├── run.py                      # launcher — python run.py [--demo]
 ├── run.sh                      # desktop launcher — ./run.sh [--install|--demo]
 ├── requirements.txt
@@ -80,8 +80,9 @@ sudo apt install -y python3 python3-venv python3-pip \
     libgl1 libglib2.0-0 libxkbcommon-x11-0 libegl1 libxcb-cursor0 \
     ffmpeg vainfo
 
-# 2. One-time setup + application-menu entry
-cd AI_CCTV
+# 2. Get the code, one-time setup + application-menu entry
+git clone https://github.com/VeloyFernandes/Linux_Local_CCTV_Viewer.git
+cd Linux_Local_CCTV_Viewer
 chmod +x run.sh
 ./run.sh --install
 
@@ -171,6 +172,15 @@ The app cannot reach cameras at `192.168.x.x` when you are away. Two options:
   express or implied. Use it at your own risk — the authors are not liable
   for any damage, data loss, or security issues arising from its use.
 
+## Lawful use
+
+Recording video of people is regulated. In the EU and the UK, CCTV that
+captures anyone beyond your own household is subject to the GDPR, and many
+countries also require visible signs, limits on where cameras may point and on
+how long footage is kept. You are responsible for using this software in line
+with the laws that apply to you; it is intended for monitoring your own
+property and cameras you are authorised to access.
+
 ## Notes
 
 - The grid grows with the number of enabled cameras: 1 → 1×1, up to 4 → 2×2,
@@ -180,6 +190,24 @@ The app cannot reach cameras at `192.168.x.x` when you are away. Two options:
 - `python run.py --demo` starts 8 synthetic test cameras — ideal for
   evaluating the UI without hardware.
 
+## Third-party software
+
+The app relies on the following libraries, installed separately through pip
+or your system package manager. They are not bundled in this repository and
+keep their own licences.
+
+| Component | Licence |
+|---|---|
+| [PySide6](https://pypi.org/project/PySide6/) (Qt for Python) | LGPL-3.0, GPL-2.0 or GPL-3.0 |
+| [OpenCV](https://pypi.org/project/opencv-python/) (`opencv-python`) | Apache-2.0 |
+| [NumPy](https://numpy.org) | BSD-3-Clause |
+| [onvif-zeep](https://pypi.org/project/onvif-zeep/) | MIT |
+| [FFmpeg](https://ffmpeg.org) (system package) | LGPL-2.1 or later; GPL for some builds |
+
+ONVIF is a trademark of ONVIF, Inc. Hikvision and Dahua are trademarks of
+their respective owners and are named only to describe camera compatibility.
+This project is not affiliated with or endorsed by any of them.
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Copyright (c) 2026 Veloy Fernandes.
