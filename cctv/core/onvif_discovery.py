@@ -116,10 +116,12 @@ def discover_onvif(timeout: float = 4.0) -> list[dict]:
                 sock.sendto(probe, (_MCAST_GROUP, _MCAST_PORT))
             except OSError:
                 pass
-            while True:
+            while time.monotonic() < deadline:
                 try:
                     data, addr = sock.recvfrom(65535)
                 except socket.timeout:
+                    break
+                except OSError:
                     break
                 info = _parse_response(data, addr[0])
                 if info:

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox,
 
 from ..config import AppSettings, CameraConfig
 from ..core.onvif_client import open_capture, resolve_rtsp_url
+from .workers import detach_worker
 
 
 class UrlTestWorker(QThread):
@@ -157,14 +158,19 @@ class CameraDialog(QDialog):
             self.test_label.setText(
                 '<span style="color:#fbbf24">⚠ Enter a host / IP first.</span>')
             return
+        if self._worker is not None and self._worker.isRunning():
+            return
         self._test_btn.setEnabled(False)
         self.test_label.setText("Testing connection…")
         self._worker = UrlTestWorker(
             host, self.port_spin.value(), self.user_edit.text(),
             self.pass_edit.text(), self.url_edit.text().strip(), parent=self)
         self._worker.result.connect(self._on_test_result)
-        self._worker.finished.connect(lambda: self._test_btn.setEnabled(True))
+        self._worker.finished.connect(self._on_test_finished)
         self._worker.start()
+
+    def _on_test_finished(self) -> None:
+        self._test_btn.setEnabled(True)
 
     def _on_test_result(self, ok: bool, message: str, url: str) -> None:
         color = "#3ddc84" if ok else "#f87171"
@@ -201,7 +207,9 @@ class CameraDialog(QDialog):
         cam.enabled = True
         return cam
 
-    def closeEvent(self, event) -> None:  # noqa: N802
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.wait(15000)
-        super().closeEvent(event)
+    def done(self, result: int) -> None:
+        # Save / Cancel / Esc / window close all end here; a running test
+        # must not be destroyed together with the dialog
+        detach_worker(self._worker, ("result",))
+        self._worker = None
+        super().done(result)

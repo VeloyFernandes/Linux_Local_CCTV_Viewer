@@ -61,9 +61,9 @@ done
 setup_venv
 
 if [ "$FOREGROUND" = "1" ]; then
-    exec .venv/bin/python run.py "${ARGS[@]}"
+    exec .venv/bin/python run.py ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 # Detached: hand the process back to the desktop session and keep a log.
 mkdir -p "$LOG_DIR"
-nohup .venv/bin/python run.py "${ARGS[@]}" > "$LOG_DIR/app.log" 2>&1 &
+nohup .venv/bin/python run.py ${ARGS[@]+"${ARGS[@]}"} > "$LOG_DIR/app.log" 2>&1 &

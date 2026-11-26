@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QHBoxLayout,
 from ..config import AppSettings, CameraConfig
 from ..core.onvif_client import probe_onvif_camera
 from ..core.onvif_discovery import discover_onvif
+from .workers import detach_worker
 
 
 class DiscoveryWorker(QThread):
@@ -69,7 +70,8 @@ class DiscoveryWorker(QThread):
             return info
 
         count = len(endpoints)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+        try:
             futures = [pool.submit(probe_one, ep) for ep in endpoints]
             for future in concurrent.futures.as_completed(futures):
                 if self._cancel:
@@ -80,6 +82,12 @@ class DiscoveryWorker(QThread):
                     continue
                 if info:
                     self.row.emit(info)
+        finally:
+            # don't wait for queued probes once cancelled
+            pool.shutdown(wait=not self._cancel, cancel_futures=self._cancel)
+        if self._cancel:
+            self.scan_done.emit(0, "Cancelled.")
+            return
         self.scan_done.emit(count, "")
 
 
@@ -143,7 +151,7 @@ class DiscoveryDialog(QDialog):
         self.status_lbl.setText("Scanning the local network…")
         if self._worker is not None and self._worker.isRunning():
             self._worker.cancel()
-            self._worker.wait(10000)
+            detach_worker(self._worker, ("row", "scan_done"))
         self._worker = DiscoveryWorker(self.user_edit.text().strip(),
                                        self.pass_edit.text(), parent=self)
         self._worker.row.connect(self._add_row)
@@ -206,8 +214,9 @@ class DiscoveryDialog(QDialog):
         self._settings.save()
         self.accept()
 
-    def closeEvent(self, event) -> None:  # noqa: N802
-        if self._worker is not None and self._worker.isRunning():
+    def done(self, result: int) -> None:
+        # Add / Close / Esc / window close all end here
+        if self._worker is not None:
             self._worker.cancel()
-            self._worker.wait(10000)
-        super().closeEvent(event)
+            detach_worker(self._worker, ("row", "scan_done"))
+        super().done(result)

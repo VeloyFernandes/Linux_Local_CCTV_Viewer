@@ -29,8 +29,13 @@ class _StatCard(QWidget):
         self.value_lbl.setText(text)
 
 
+_HAS_NVIDIA_SMI = shutil.which("nvidia-smi") is not None
+
+
 def _gpu_usage() -> str:
     """NVIDIA GPU utilisation via nvidia-smi ('' if unavailable)."""
+    if not _HAS_NVIDIA_SMI:
+        return ""
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=utilization.gpu",
@@ -72,7 +77,9 @@ class DashboardDialog(QDialog):
 
     def refresh(self) -> None:
         mw = self._mw
-        sample = mw._system.snapshot()
+        # MainWindow samples once per second; taking a second sample here
+        # would split the measuring window and make the rates jump around
+        sample = mw._system.last
         self._cards["CPU"].set_value(f"{sample['cpu_pct']:.0f} %")
         gpu = _gpu_usage()
         self._cards["GPU"].set_value(gpu or "n/a (no NVIDIA)")
@@ -82,7 +89,12 @@ class DashboardDialog(QDialog):
             f"↓ {format_bps(sample['net_down_bps'])}  ↑ {format_bps(sample['net_up_bps'])}")
 
         try:
-            usage = shutil.disk_usage(Path(mw._settings.record_dir))
+            # the recordings folder may not exist yet — measure the nearest
+            # existing parent (same filesystem)
+            target = Path(mw._settings.record_dir)
+            while not target.exists() and target != target.parent:
+                target = target.parent
+            usage = shutil.disk_usage(target)
             free_gb = usage.free / 2**30
             self._cards["Storage"].set_value(
                 f"{free_gb:.0f} GB free\n{usage.used / usage.total * 100:.0f}% used")
