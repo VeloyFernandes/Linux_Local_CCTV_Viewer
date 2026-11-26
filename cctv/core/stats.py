@@ -61,6 +61,11 @@ class SystemStats:
         self._last = {"cpu_pct": 0.0, "mem_pct": 0.0,
                       "net_down_bps": 0.0, "net_up_bps": 0.0}
 
+    @property
+    def last(self) -> dict:
+        """The most recent sample, without taking a new one."""
+        return self._last
+
     def snapshot(self) -> dict:
         try:
             cpu_total, cpu_idle = _read_cpu()

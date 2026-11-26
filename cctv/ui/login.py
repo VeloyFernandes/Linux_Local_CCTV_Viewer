@@ -79,7 +79,8 @@ class LoginDialog(QDialog):
 
         buttons.accepted.connect(self._validate)
         buttons.rejected.connect(self.reject)
-        self.pass_edit.returnPressed.connect(self._validate)
+        # Enter already triggers the default (OK) button — connecting
+        # returnPressed as well would validate twice
 
     def _fail(self, message: str) -> None:
         self._error.setText(message)

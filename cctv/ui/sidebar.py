@@ -1,10 +1,12 @@
 """Collapsible camera sidebar with live status indicators."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QListWidget,
-                               QListWidgetItem, QPushButton, QVBoxLayout,
-                               QWidget)
+                               QListWidgetItem, QPushButton, QSizePolicy,
+                               QVBoxLayout, QWidget)
+
+SIDEBAR_WIDTH = 240
 
 from ..config import CameraConfig
 
@@ -58,7 +60,11 @@ class Sidebar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("sidebar")
-        self.setFixedWidth(240)
+        # width is driven by maximumWidth so the main window can animate the
+        # collapse; a fixed width (min == max) would make that impossible
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(SIDEBAR_WIDTH)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         self._rows: dict[str, _CameraRow] = {}
 
         layout = QVBoxLayout(self)
@@ -87,6 +93,12 @@ class Sidebar(QFrame):
         self.list.itemClicked.connect(self._on_clicked)
         self.list.itemDoubleClicked.connect(self._on_double_clicked)
         layout.addWidget(self.list, 1)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(SIDEBAR_WIDTH, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, super().minimumSizeHint().height())
 
     # ---------------------------------------------------------------- sync
 

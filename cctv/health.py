@@ -34,6 +34,7 @@ class HealthMonitor(QObject):
         self._last_cooldown: dict[tuple[str, str], float] = {}
         self._reconnects: dict[str, int] = {}
         self._was_connected: dict[str, bool] = {}
+        self._threads: dict[str, object] = {}
 
         self._timer = QTimer(self)
         self._timer.setInterval(3000)
@@ -52,13 +53,22 @@ class HealthMonitor(QObject):
 
     def check(self) -> None:
         now = time.monotonic()
-        for record in self._manager.records():
+        items = self._manager.items()
+        live = {key for key, _record in items}
+        for stale in [key for key in self._threads if key not in live]:
+            self._threads.pop(stale, None)
+        for key, record in items:
             cam = record.get("camera")
             if cam is None:
                 continue
-            key = cam.id
-            stats = record["thread"].stats.snapshot()
+            thread = record["thread"]
+            stats = thread.stats.snapshot()
             state = stats["state"]
+            # a restarted stream is a new thread with fresh counters
+            if self._threads.get(key) is not thread:
+                self._threads[key] = thread
+                self._reconnects[key] = 0
+                self._was_connected[key] = False
 
             if state in ("error", "reconnecting"):
                 if self._was_connected.get(key, False) and \
@@ -66,7 +76,7 @@ class HealthMonitor(QObject):
                     self.alert.emit(cam.id, "error",
                                     f"{cam.name} went offline — {state}")
                 self._was_connected[key] = False
-            else:
+            elif state == "connected":
                 self._was_connected[key] = True
 
             reconnects = int(stats.get("reconnects", 0))
@@ -80,7 +90,8 @@ class HealthMonitor(QObject):
             elif reconnects == 0:
                 self._reconnects[key] = 0
 
-            if state == "connected":
+            # fps is only measured after the first full second of frames
+            if state == "connected" and stats.get("measured"):
                 if stats["fps"] < 1.0 and self._cooled(key, "low_fps", now):
                     self.alert.emit(cam.id, "warning",
                                     f"{cam.name} stream quality degraded "
