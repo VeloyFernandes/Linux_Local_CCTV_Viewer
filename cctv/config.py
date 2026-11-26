@@ -36,6 +36,14 @@ def _deobfuscate(text: str) -> str:
         return text or ""
 
 
+def _int(value, default: int) -> int:
+    """Lenient int() for values read from the config file."""
+    try:
+        return int(value) if value not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
 def hash_password(password: str) -> str:
     """Salt + SHA-256 hex, stored as ``salt$digest``."""
     salt = os.urandom(16).hex()
@@ -83,7 +91,7 @@ class CameraConfig:
             id=str(data.get("id") or uuid.uuid4().hex[:12]),
             name=str(data.get("name") or "Camera"),
             host=str(data.get("host") or ""),
-            port=int(data.get("port") or 80),
+            port=_int(data.get("port"), 80) or 80,
             username=str(data.get("username") or DEFAULT_USERNAME),
             password=_deobfuscate(str(data.get("password") or "")),
             rtsp_url=str(data.get("rtsp_url") or ""),
@@ -91,8 +99,8 @@ class CameraConfig:
             prefer_substream=bool(data.get("prefer_substream", True)),
             enabled=bool(data.get("enabled", True)),
             remote_host=str(data.get("remote_host") or ""),
-            remote_port=int(data.get("remote_port") or 0),
-            remote_rtsp_port=int(data.get("remote_rtsp_port") or 0),
+            remote_port=_int(data.get("remote_port"), 0),
+            remote_rtsp_port=_int(data.get("remote_rtsp_port"), 0),
             remote_rtsp_url=str(data.get("remote_rtsp_url") or ""),
         )
 
@@ -125,11 +133,13 @@ class AppSettings:
             raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except Exception:
             return settings
+        if not isinstance(raw, dict):
+            return settings
         settings.default_username = str(raw.get("default_username") or DEFAULT_USERNAME)
         settings.default_password = _deobfuscate(str(raw.get("default_password") or "")) or DEFAULT_PASSWORD
         settings.hw_accel = str(raw.get("hw_accel") or "auto")
-        settings.grid_width = int(raw.get("grid_width") or 1920)
-        settings.fullscreen_width = int(raw.get("fullscreen_width") or 1920)
+        settings.grid_width = _int(raw.get("grid_width"), 1920) or 1920
+        settings.fullscreen_width = _int(raw.get("fullscreen_width"), 1920) or 1920
         settings.grid_quality = str(raw.get("grid_quality") or "high")
         if settings.grid_quality not in ("low", "high"):
             settings.grid_quality = "high"
@@ -147,7 +157,8 @@ class AppSettings:
                 settings.window_size = (int(size[0]), int(size[1]))
             except (TypeError, ValueError):
                 settings.window_size = None
-        for item in raw.get("cameras") or []:
+        cameras = raw.get("cameras")
+        for item in cameras if isinstance(cameras, list) else []:
             try:
                 settings.cameras.append(CameraConfig.from_dict(item))
             except Exception:
@@ -174,7 +185,11 @@ class AppSettings:
             "cameras": [cam.to_dict() for cam in self.cameras],
         }
         tmp = CONFIG_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+        # the file holds camera passwords: keep it private to the user
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(raw, indent=2))
+        os.chmod(tmp, 0o600)
         tmp.replace(CONFIG_PATH)
 
     def has_login(self) -> bool:

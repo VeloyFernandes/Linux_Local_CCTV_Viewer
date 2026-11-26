@@ -41,7 +41,7 @@ class StreamStats:
     """Mutable per-stream statistics (written by the worker, read by the UI)."""
 
     __slots__ = ("state", "width", "height", "fps", "bitrate_kbps",
-                 "latency_ms", "hw_mode", "frames", "reconnects")
+                 "latency_ms", "hw_mode", "frames", "reconnects", "measured")
 
     def __init__(self) -> None:
         self.reset()
@@ -56,6 +56,7 @@ class StreamStats:
         self.hw_mode = ""
         self.frames = 0
         self.reconnects = 0
+        self.measured = False  # fps/bitrate/latency hold a real measurement
 
     def snapshot(self) -> dict:
         return {key: getattr(self, key) for key in self.__slots__}
@@ -274,6 +275,7 @@ class StreamThread(QThread):
                         self.stats.bitrate_kbps = bytes_total * 8.0 / elapsed / 1000.0
                         self.stats.latency_ms = read_ms_sum / max(1, frames)
                         self.stats.frames += frames
+                        self.stats.measured = True
                         win_start = time.monotonic()
                         frames = bytes_total = 0
                         read_ms_sum = 0.0
@@ -295,6 +297,7 @@ class StreamThread(QThread):
 
     def _set_state(self, state: str, detail: str) -> None:
         self.stats.state = state
+        self.stats.measured = False
         if state != "connected":
             self.stats.fps = 0.0
             self.stats.bitrate_kbps = 0.0
@@ -391,6 +394,7 @@ class StreamThread(QThread):
             self.stats.fps = 20.0
             self.stats.bitrate_kbps = 4096.0  # realistic-looking demo value
             self.stats.latency_ms = 2.0
+            self.stats.measured = True
             self._stop.wait(0.05)
         self._set_state("stopped", "Stopped")
 
@@ -505,6 +509,10 @@ class StreamManager(QObject):
     def records(self) -> list[dict]:
         return list(self._streams.values())
 
+    def items(self) -> list[tuple[str, dict]]:
+        """``(key, record)`` pairs — keys distinguish grid/fullscreen streams."""
+        return list(self._streams.items())
+
     def stop(self, key: str) -> None:
         record = self._streams.pop(key, None)
         if record is None:
@@ -520,6 +528,10 @@ class StreamManager(QObject):
         _prune_zombies()
 
     def stop_all(self) -> None:
+        # signal every thread first so they wind down in parallel instead of
+        # one after another (each join can take seconds mid-ONVIF-resolve)
+        for record in self._streams.values():
+            record["thread"].request_stop()
         for key in list(self._streams):
             self.stop(key)
         # guarantee no unfinished thread reaches interpreter teardown

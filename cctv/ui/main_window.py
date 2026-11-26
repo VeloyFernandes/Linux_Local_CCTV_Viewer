@@ -9,6 +9,7 @@ Owns and coordinates:
 from __future__ import annotations
 
 import math
+import weakref
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer, Qt
@@ -28,9 +29,10 @@ from .discovery import DiscoveryDialog
 from .fullscreen import FullscreenWindow
 from .login import LoginDialog
 from .ptz_pad import PTZPadDialog
-from .sidebar import Sidebar
+from .sidebar import SIDEBAR_WIDTH, Sidebar
 from .toasts import ToastManager
 from .video_tile import VideoTile
+from .workers import wait_detached
 
 
 class MainWindow(QMainWindow):
@@ -42,7 +44,10 @@ class MainWindow(QMainWindow):
         self._manager.camera_relocated.connect(self._on_camera_relocated)
         self._recorder = RecordingManager(settings)
         self._recorder.changed.connect(self._on_recording_changed)
+        self._recorder.failed.connect(self._on_recording_failed)
         self._states: dict[str, str] = {}
+        # stream threads whose status signal is already wired to _on_status
+        self._hooked_threads: weakref.WeakSet = weakref.WeakSet()
         self._tiles: list[VideoTile] = []
         self._fullscreen: FullscreenWindow | None = None
         self._ptz_dialogs: dict[str, PTZPadDialog] = {}
@@ -105,6 +110,9 @@ class MainWindow(QMainWindow):
         self._network_act.setCheckable(True)
         self._network_act.setChecked(self._settings.network_mode == "remote")
         self._network_act.toggled.connect(self._toggle_network)
+        # actions that start streams or reveal cameras: disabled while locked
+        self._monitor_actions = [add_act, discover_act, dashboard_act,
+                                 reconnect_act]
         add_act.triggered.connect(self._add_camera)
         discover_act.triggered.connect(self._discover)
         dashboard_act.triggered.connect(self._open_dashboard)
@@ -224,13 +232,16 @@ class MainWindow(QMainWindow):
     def _toggle_sidebar(self, visible: bool) -> None:
         self._settings.show_sidebar = visible
         if visible:
+            if not self.sidebar.isVisible():
+                self.sidebar.setMaximumWidth(0)
             self.sidebar.show()
             self._sidebar_anim.stop()
-            self._sidebar_anim.setStartValue(0)
-            self._sidebar_anim.setEndValue(240)
+            self._sidebar_anim.setStartValue(self.sidebar.maximumWidth()
+                                             if self.sidebar.isVisible() else 0)
+            self._sidebar_anim.setEndValue(SIDEBAR_WIDTH)
         else:
             self._sidebar_anim.stop()
-            self._sidebar_anim.setStartValue(self.sidebar.maximumWidth() or 240)
+            self._sidebar_anim.setStartValue(self.sidebar.width())
             self._sidebar_anim.setEndValue(0)
         self._sidebar_anim.start()
 
@@ -295,15 +306,24 @@ class MainWindow(QMainWindow):
             if cam is None:
                 continue
             thread, buffer = self._manager.ensure_start(cam, key=cam.id)
-            if not restart:  # keep exactly one status hook on reused threads
-                thread.status.disconnect(self._on_status)
-            thread.status.connect(self._on_status)
+            self._hook_status(thread)
             tile.set_buffer(buffer)
             tile.set_quality(self._grid_quality())
             tile.set_status(thread.stats.state or "connecting", "Starting…")
+            tile.set_recording(self._recorder.is_recording(cam.id))
+            self._recorder.set_buffer(cam.id, buffer)
 
         self.sidebar.rebuild(cameras)
+        for cam in cameras:
+            self.sidebar.set_recording(cam.id,
+                                       self._recorder.is_recording(cam.id))
         self._update_status_bar()
+
+    def _hook_status(self, thread) -> None:
+        """Connect a stream's status signal once (threads can be reused)."""
+        if thread not in self._hooked_threads:
+            thread.status.connect(self._on_status)
+            self._hooked_threads.add(thread)
 
     def _on_status(self, cam_id: str, state: str, detail: str) -> None:
         previous = self._states.get(cam_id)
@@ -313,11 +333,12 @@ class MainWindow(QMainWindow):
                 tile.set_status(state, detail)
                 break
         self.sidebar.set_state(cam_id, state)
-        if state == "error":
-            self._toasts.show(f"Camera error — {detail}", "error")
+        cam = self._settings.get(cam_id)
+        name = cam.name if cam else "Camera"
+        if state == "error" and previous != "error":
+            # the stream retries forever: only report entering the error state
+            self._toasts.show(f"{name}: {detail}", "error")
         elif state == "connected" and previous in ("reconnecting", "error"):
-            cam = self._settings.get(cam_id)
-            name = cam.name if cam else "Camera"
             self._toasts.show(f"{name} reconnected", "success")
         self._update_status_bar()
 
@@ -408,6 +429,9 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             dialog.result_camera()  # mutates the existing config in place
             self._settings.save()
+            # restarting every stream also stops the fullscreen one
+            if self._fullscreen is not None:
+                self._close_fullscreen()
             self._apply_cameras(restart=True)
 
     def _remove_camera(self, cam_id: str) -> None:
@@ -421,17 +445,20 @@ class MainWindow(QMainWindow):
         if self._fullscreen is not None and self._fullscreen._camera.id == cam_id:
             self._close_fullscreen()
         self._recorder.stop(cam_id)
-        self._ptz_dialogs.pop(cam_id, None)
+        dialog = self._ptz_dialogs.pop(cam_id, None)
+        if dialog is not None:
+            dialog.close()
         self._settings.remove(cam_id)
         self._settings.save()
         self._apply_cameras(restart=True)
 
     def _restart_camera(self, cam_id: str) -> None:
         cam = self._settings.get(cam_id)
-        if cam is None:
+        if cam is None or not self._logged_in:
             return
         thread, buffer = self._manager.restart(cam, key=cam_id)
-        thread.status.connect(self._on_status)
+        self._recorder.set_buffer(cam_id, buffer)
+        self._hook_status(thread)
         for tile in self._tiles:
             if tile.camera_id == cam_id:
                 tile.set_buffer(buffer)
@@ -497,8 +524,13 @@ class MainWindow(QMainWindow):
         if self._fullscreen is not None:
             window = self._fullscreen
             self._fullscreen = None
+            cam_id = window._camera.id
+            grid_buffer = self._manager.get_buffer(cam_id)
+            if grid_buffer is not None:
+                self._recorder.set_buffer(cam_id, grid_buffer)
             window.shutdown()
             window.close()
+            window.deleteLater()
         self.show()
         self.raise_()
         self.activateWindow()
@@ -541,10 +573,17 @@ class MainWindow(QMainWindow):
         for tile in self._tiles:
             if tile.camera_id == cam_id:
                 tile.set_recording(recording)
+        if self._fullscreen is not None and self._fullscreen._camera.id == cam_id:
+            self._fullscreen.tile.set_recording(recording)
         self.sidebar.set_recording(cam_id, recording)
-        if path and path.startswith(self._settings.record_dir):
+        if path:  # only set once the file has been finalised
             self._toasts.show(f"Recording saved: {Path(path).name}",
                               "success")
+
+    def _on_recording_failed(self, cam_id: str, message: str) -> None:
+        cam = self._settings.get(cam_id)
+        name = cam.name if cam else "Camera"
+        self._toasts.show(f"{name}: {message}", "error")
 
     # ------------------------------------------------------------------ PTZ
 
@@ -631,7 +670,10 @@ class MainWindow(QMainWindow):
         else:
             self._login_btn.setText("Login")
             self._login_btn.setToolTip("Log in to this monitor")
+            # no menu while signed out: a plain click opens the login dialog
             self._login_btn.setPopupMode(QToolButton.DelayedPopup)
+        for action in self._monitor_actions:
+            action.setEnabled(self._logged_in)
 
     def _open_login(self) -> None:
         if self._logged_in:
@@ -658,8 +700,16 @@ class MainWindow(QMainWindow):
 
     def _lock_ui(self) -> None:
         """Stop the streams and put the lock page in front of the grid."""
+        if self._fullscreen is not None:
+            self._close_fullscreen()
+        self._recorder.stop_all()
+        for dialog in list(self._ptz_dialogs.values()):
+            dialog.close()
+        self._ptz_dialogs.clear()
         self._manager.stop_all()
         self._states.clear()
+        for tile in self._tiles:
+            tile.clear()
         self._stack.setCurrentIndex(1)
         self._update_login_button()
         self._update_status_bar()
@@ -684,8 +734,11 @@ class MainWindow(QMainWindow):
                 if not cam.rtsp_url.startswith("demo:")]
         self._settings.save()
         self._health.stop()
+        self._refresh_timer.stop()
+        self._stats_timer.stop()
         self._recorder.stop_all()
         for dialog in list(self._ptz_dialogs.values()):
             dialog.close()
         self._manager.stop_all()
+        wait_detached()
         super().closeEvent(event)

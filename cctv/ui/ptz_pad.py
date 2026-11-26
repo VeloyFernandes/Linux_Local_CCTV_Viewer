@@ -13,7 +13,7 @@ import threading
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QLabel,
-                               QPushButton, QVBoxLayout, QWidget)
+                               QPushButton, QVBoxLayout)
 
 from ..config import CameraConfig
 from ..ptz.controller import PTZController
@@ -37,6 +37,7 @@ class PTZPad(QFrame):
         self._ready = False
         self._command: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self._moving = False
+        self._shut_down = False
 
         self._keepalive = QTimer(self)
         self._keepalive.setInterval(_KEEPALIVE_MS)
@@ -152,10 +153,14 @@ class PTZPad(QFrame):
             pass
 
     def _send(self, pan: float, tilt: float, zoom: float) -> None:
+        if self._shut_down:
+            return
         self._drain()  # latest command wins
         self._queue.put((float(pan), float(tilt), float(zoom)))
 
     def _send_stop(self) -> None:
+        if self._shut_down:
+            return
         self._drain()
         self._queue.put(_STOP)
 
@@ -197,8 +202,12 @@ class PTZPad(QFrame):
             self._send_stop()
 
     def shutdown(self) -> None:
+        if self._shut_down:
+            return
         self._setup_timer.stop()
         self.stop()
+        self._shut_down = True
+        self._queue.put(None)  # let the sender thread exit after the stop
 
 
 class PTZPadDialog(QDialog):
@@ -213,6 +222,10 @@ class PTZPadDialog(QDialog):
         self.pad = PTZPad(camera)
         layout.addWidget(self.pad)
         self.adjustSize()
+
+    def done(self, result: int) -> None:  # Esc does not send a closeEvent
+        self.pad.shutdown()
+        super().done(result)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self.pad.shutdown()
